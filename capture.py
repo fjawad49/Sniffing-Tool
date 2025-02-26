@@ -25,6 +25,14 @@ Param:
 	packet: represents a captured packet of type Packet.
 """
 def parse_packet(packet):
+	ip_version = None
+	if packet.haslayer(IPv6):
+		ip_version = IPv6
+	elif packet.haslayer(IP):
+		ip_version = IP
+	else:
+		return
+
 	# Check for packets that are automatically detected as TLSClientHello
 	if packet.haslayer(TCP) and packet.haslayer(TLS) and packet.haslayer(TLSClientHello):
 		TLSCH = packet[TLSClientHello]
@@ -34,14 +42,14 @@ def parse_packet(packet):
             		for ext in TLSCH.ext:
             			if ext.type == 0:
             				dst_host = ext.servernames[0].servername.decode()
-            				print(f"{time} TLS  {packet[IP].src}:{packet[TCP].sport} -> {packet[IP].dst}:{packet[TCP].dport} {dst_host}")
+            				print(f"{time} TLS  {packet[ip_version].src}:{packet[TCP].sport} -> {packet[ip_version].dst}:{packet[TCP].dport} {dst_host}")
             				return
             			else:
-            				print(f"{time} TLS  {packet[IP].src}:{packet[TCP].sport} -> {packet[IP].dst}:{packet[TCP].dport}")
+            				print(f"{time} TLS  {packet[ip_version].src}:{packet[TCP].sport} -> {packet[ip_version].dst}:{packet[TCP].dport}")
             				return
             				
-        # Check if request is potentially HTTP or TLSv1.0, which are not automatically detected
-	if packet.haslayer(TCP) and packet.haslayer(Raw):
+        # Check if request is potentially HTTP or TLS on IPv6, which are not automatically detected
+	if packet.haslayer(TCP) and packet.haslayer(Raw) and hasattr(packet, "load"):
 		time = str(datetime.fromtimestamp(float(packet.time)))
 		# Parse packet as a TLS packet and determine if parsing is valid
 		content = TLS(packet.load)
@@ -52,10 +60,10 @@ def parse_packet(packet):
 				for ext in TLSCH.ext:
 					if ext.type == 0:
 						dst_host = ext.servernames[0].servername.decode()
-						print(f"{time} TLS  {packet[IP].src}:{packet[TCP].sport} -> {packet[IP].dst}:{packet[TCP].dport} {dst_host}")
+						print(f"{time} TLS  {packet[ip_version].src}:{packet[TCP].sport} -> {packet[ip_version].dst}:{packet[TCP].dport} {dst_host}")
 						return
 					else:
-						print(f"{time} TLS  {packet[IP].src}:{packet[TCP].sport} -> {packet[IP].dst}:{packet[TCP].dport}")
+						print(f"{time} TLS  {packet[ip_version].src}:{packet[TCP].sport} -> {packet[ip_version].dst}:{packet[TCP].dport}")
 						return
 					
 		method = None
@@ -67,25 +75,27 @@ def parse_packet(packet):
 			method = "POST"
 		else:
 			return
-		print(f"{time} HTTP {packet[IP].src}:{packet[TCP].sport} -> {packet[IP].dst}:{packet[TCP].dport} {content[3][:-13]} {content[0]} {content[1]}")
-		return
+
+		if content[2].startswith("HTTP") and content[2].endswith("Host:"):
+			print(f"{time} HTTP {packet[ip_version].src}:{packet[TCP].sport} -> {packet[ip_version].dst}:{packet[TCP].dport} {content[3][:-13]} {content[0]} {content[1]}")
+			return
+		else:
+			return
 	
 	# Check for packets that are automatically detected as DNS requests
 	if packet.haslayer(UDP) and packet.haslayer(DNSQR) and (packet[DNSQR].qtype == 1) and packet[DNS].qr == 0:
 		time = str(datetime.fromtimestamp(float(packet.time)))
 		domain = packet[DNSQR].qname.decode()
-		print(f"{time} DNS  {packet[IP].src}:{packet[UDP].sport} -> {packet[IP].dst}:{packet[UDP].dport} {domain}")
+		print(f"{time} DNS  {packet[ip_version].src}:{packet[UDP].sport} -> {packet[ip_version].dst}:{packet[UDP].dport} {domain}")
 		
 # CLI option -i takes precedence over option -r
 if args.i != None:
 	if args.expression != None:
 		args.expression = " ".join(args.expression)
-		print(args.expression)
 	sniff(filter=args.expression, prn=parse_packet, iface=args.i[0])
 elif args.i == None and args.r == None:
 	if args.expression != None:
 		args.expression = " ".join(args.expression)
-		print(args.expression)
 	sniff(filter=args.expression, prn=parse_packet, iface="eth0")
 elif args.r != None:
 	pcap = rdpcap(args.r[0])
